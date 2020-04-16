@@ -11,6 +11,12 @@ from bs4 import BeautifulSoup as soup
 from urllib.request import urlopen
 import pandas as pd
 
+import psycopg2
+from io import StringIO # used for bulk insert of df to db
+import os
+
+
+
 
 # pass in a url and returned the requested page
 def extract_webpage(page_url):
@@ -88,6 +94,23 @@ def pullRows(txt_soup, clabel):
         rows.append(curr)
     return rows
 
+# function to convert pandas dataframe to postgresql database (fast bulk insert method)
+# accepts a pd df as an argument
+def to_database(dframe):
+    # establish connection to database
+    conn = psycopg2.connect(dbname="", user="", password="") # good/safe practice to use env variables
+
+    # setup string buffer initialization
+    data_io = StringIO()
+    data_io.write(dframe.to_csv(index=None, header=None)) # write pd df as csv to buffer
+    data_io.seek(0)
+
+    # copy string buff to db, like normal file
+    # open cursor to perform database ops
+
+
+
+
 
 def main():
     # Get requested firm cik from command line
@@ -111,8 +134,8 @@ def main():
     # combine into a dataframe
     dframe = pd.DataFrame(data=file_rows, columns=file_col)
 
-    # convert into csv file
-    dframe.to_csv(cik, index=False)
+    # convert into csv file (comment out for now because handled in above func)
+    #dframe.to_csv(cik, index=False)
     print("File Extraction Complete")
 
 
