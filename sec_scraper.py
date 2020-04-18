@@ -98,7 +98,7 @@ def pullRows(txt_soup, clabel):
 # accepts a pd df as an argument
 def to_database(dframe):
     # establish connection to database
-    conn = psycopg2.connect(dbname="", user="", password="") # good/safe practice to use env variables
+    conn = psycopg2.connect(dbname="", user="postgres", password="rhodes") # good/safe practice to use env variables
 
     # setup string buffer initialization
     data_io = StringIO()
@@ -107,6 +107,9 @@ def to_database(dframe):
 
     # copy string buff to db, like normal file
     # open cursor to perform database ops
+    with conn.cursor as x:
+        x.copy_from(data_io, "my-schema", columns=dframe.Dataframe.columns, sep=",")  # watch columns arg
+        conn.commit()
 
 
 
