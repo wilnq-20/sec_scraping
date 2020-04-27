@@ -5,6 +5,7 @@ Last Updated: 2/25/20
 Script scrapes firm 13F filings from the SEC Edgar database and outputs to a pandas dataframe
 """
 
+import os
 import re  # library for regular expressions operations
 import sys  # used for reading command line arguments
 from bs4 import BeautifulSoup as soup
@@ -12,8 +13,9 @@ from urllib.request import urlopen
 import pandas as pd
 
 import psycopg2
+import sqlalchemy
 from io import StringIO # used for bulk insert of df to db
-import os
+
 
 
 
@@ -24,23 +26,39 @@ def extract_webpage(page_url):
     req_page = url_data.read()
     url_data.close()
 
+
     return req_page
 
 
 # function returns the web pages soup
-def extract_soup(comp_soup):
+def extract_soup(comp_soup, cik):
     # start with URL of comp filing page
     # from the filings page - get the URL for the 13F documents (grabs tags for all 'documentsbutton')
     # using BS methods for searching parse trees
-    comp_filing_url = 'http://www.sec.gov' + comp_soup.find('a', {'id': 'documentsbutton'})['href']
+    try:
+        comp_filing_url = 'http://www.sec.gov' + comp_soup.find('a', {'id': 'documentsbutton'})['href']
+    except TypeError:
+        print('comp_filing_url: The cik is probably invalid', cik)
+    except:
+        print('Something went wrong')
 
-    filingsPage_soup = soup(extract_webpage(comp_filing_url), 'html.parser')
+    try:
+        filingsPage_soup = soup(extract_webpage(comp_filing_url), 'html.parser')
+    except:
+        print("filingsPage_soup: the cik is probably invalid", cik)
 
     # using another BS defined method and regular expression library
-    file_url = ('http://www.sec.gov' + filingsPage_soup.find('a', text=re.compile(r".*\.txt$"))['href'])
+    try:
+        file_url = ('http://www.sec.gov' + filingsPage_soup.find('a', text=re.compile(r".*\.txt$"))['href'])
+    except:
+        print("file_url: the cik is provably invalid", cik)
 
     # get the .txt file xml soup
-    file_soup = soup(extract_webpage(file_url), 'xml')
+    try:
+        file_soup = soup(extract_webpage(file_url), 'xml')
+    except:
+        print("file_soup: the cik is probably invalid", cik)
+    print('extracted soup')
 
     return file_soup
 
@@ -48,8 +66,11 @@ def extract_soup(comp_soup):
 # Search SEC database for fund 13F documents if they exist
 def fundfinder(cik):
     # specify url of web page you want to scrape (will need to concatenate link and cik)
-    comp_url = ('http://www.sec.gov/cgi-bin/browse-edgar?action='
+    try:
+        comp_url = ('http://www.sec.gov/cgi-bin/browse-edgar?action='
                 'getcompany&CIK=' + cik + '&type=13F&dateb=&owner=exclude&count=40')
+    except:
+        print("fundfinder: Couldn't find this URL", cik)
 
     # we create a beautiful soup object by passing in two args
     find_soup = soup(extract_webpage(comp_url), 'html.parser')
@@ -76,6 +97,8 @@ def pullColumns(txt):
         if (len(clabel) > len(all_clabel)):
             all_clabel = clabel
 
+    print("clabel is: ", all_clabel)
+
     return all_clabel
 
 
@@ -92,54 +115,76 @@ def pullRows(txt_soup, clabel):
             else:
                 curr.append(row.find(column).string)  # else, take item from column
         rows.append(curr)
+
+    print("rows are: ", rows)
     return rows
 
 # function to convert pandas dataframe to postgresql database (fast bulk insert method)
 # accepts a pd df as an argument
-def to_database(dframe):
-    # establish connection to database
-    conn = psycopg2.connect(dbname="", user="postgres", password="rhodes") # good/safe practice to use env variables
+def to_database(connection, cik, dframe):
 
-    # setup string buffer initialization
-    data_io = StringIO()
-    data_io.write(dframe.to_csv(index=None, header=None)) # write pd df as csv to buffer
-    data_io.seek(0)
+    print(dframe)
+    table_name = cik
+    try:
+        dframe.to_sql(table_name, connection, if_exists='replace')
+    except:
+        print("couldn't update database")
 
-    # copy string buff to db, like normal file
-    # open cursor to perform database ops
-    with conn.cursor as x:
-        x.copy_from(data_io, "my-schema", columns=dframe.Dataframe.columns, sep=",")  # watch columns arg
-        conn.commit()
 
+
+def parse_txt():
+    companyTable = {}
+    cikTable = {}
+    companiesFile = open("companies.txt", "r")
+    companies = companiesFile.readlines()
+    for line in companies:
+        splitUp = line.split(': ')
+        compName = splitUp[0].rstrip()
+        compCIK = splitUp[1].rstrip()
+        companyTable[compCIK] = compName
+        cikTable[compName] = compCIK
+    companiesFile.close()
+    return companyTable, cikTable
 
 
 
 
 def main():
-    # Get requested firm cik from command line
-    if len(sys.argv) > 2:
-        print('Invalid number of parameters. Only enter 1 cik')  # should only accept program name and company cik
-        sys.exit()  # exits python
 
-    # store cik to search for in SEC EDGAR
-    cik = sys.argv[1]
-    print('Extracting 13F: ' + cik)
+    companyTable, cikTable = parse_txt()
 
-    # stores the search page extracted and searched by BS
-    comp_soup = fundfinder(cik)
+    #cik = '0001350694'
+    # establish connection to database
+    try:
+        engine = sqlalchemy.create_engine(("postgresql://postgres:password@localhost/CoinLogic"))
+        con = engine.connect()
+        print('connected to database')
+    except:
+        print("couldn't connect to DB")
 
-    # extract the soup of the given url page
-    txt_soup = extract_soup(comp_soup)
+    for cik in companyTable:
+        print('Extracting 13F: ' + cik)
+        # stores the search page extracted and searched by BeautifulSoup
+        comp_soup = fundfinder(cik)
 
-    file_col = pullColumns(txt_soup)
-    file_rows = pullRows(txt_soup, file_col)
+        # extract the soup of the given url page
+        txt_soup = extract_soup(comp_soup, cik)
+        print('extracted webpage')
 
-    # combine into a dataframe
-    dframe = pd.DataFrame(data=file_rows, columns=file_col)
+        #create aspects of dataframe
+        file_col = pullColumns(txt_soup)
+        file_rows = pullRows(txt_soup, file_col)
 
-    # convert into csv file (comment out for now because handled in above func)
-    #dframe.to_csv(cik, index=False)
-    print("File Extraction Complete")
+        # combine into a dataframe
+        dframe = pd.DataFrame(data=file_rows, columns=file_col)
+        print(dframe)
+        print("File Extraction Complete")
+
+        to_database(con, cik, dframe)
+
+    con.close()
+
+    print("updated database")
 
 
 if __name__ == "__main__":
