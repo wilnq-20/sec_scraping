@@ -1,6 +1,6 @@
 """
 Name: sec_scraper.py
-Authors: Nick Williams, Jaimin Patel, Carter King
+Author: Nick Williams
 Last Updated: 2/25/20
 Script scrapes firm 13F filings from the SEC Edgar database and outputs to a pandas dataframe
 """
